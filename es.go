@@ -42,7 +42,7 @@ func (es *ElasticSearch) mkURL(index, doctype, id string,
 
 func handleResponse(resp *http.Response) (*response, error) {
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode > 299 || resp.StatusCode < 200 {
 		return nil, errors.New(resp.Status)
 	}
 
