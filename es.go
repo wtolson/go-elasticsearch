@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 )
@@ -61,9 +62,13 @@ func handleResponse(resp *http.Response) (*response, error) {
 		return nil, errors.New(resp.Status)
 	}
 
-	d := json.NewDecoder(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	iresp := &response{}
-	err := d.Decode(iresp)
+	err = json.Unmarshal(body, iresp)
 	if err != nil {
 		return nil, err
 	}

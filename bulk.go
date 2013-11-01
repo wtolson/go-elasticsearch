@@ -82,6 +82,7 @@ func (b *bulkWriter) SendBatch() error {
 	if err != nil {
 		return err
 	}
+	// TODO: Is it necessary to read until EOF here?
 	defer resp.Body.Close()
 	// TODO: Parse the response and check each thingy.
 	if resp.StatusCode > 201 {
