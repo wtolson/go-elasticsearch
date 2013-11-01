@@ -12,6 +12,7 @@ import (
 
 // Reference to an ElasticSearch server.
 type ElasticSearch struct {
+	client *http.Client
 	// Base URL to elasticsearch
 	URL string
 }
@@ -23,6 +24,20 @@ type response struct {
 	Id     string                 `json:"_id"`
 	Found  bool                   `json:"found"`
 	Source map[string]interface{} `json:"_source"`
+}
+
+func NewElasticSearch(URL string, maxConns int) *ElasticSearch {
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: maxConns,
+	}
+	client := &http.Client{
+		Transport: transport,
+	}
+
+	return &ElasticSearch{
+		client: client,
+		URL:    URL,
+	}
 }
 
 func (es *ElasticSearch) mkURL(index, doctype, id string,
@@ -74,7 +89,7 @@ func (es *ElasticSearch) Index(index, doctype, id string,
 		return "", err
 	}
 
-	resp, err := http.DefaultClient.Post(es.mkURL(index, doctype, id, params),
+	resp, err := es.client.Post(es.mkURL(index, doctype, id, params),
 		"application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return "", err
@@ -96,7 +111,7 @@ func (es *ElasticSearch) Delete(index, doctype, id string,
 	if err != nil {
 		return false, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := es.client.Do(req)
 	if err != nil {
 		return false, err
 	}

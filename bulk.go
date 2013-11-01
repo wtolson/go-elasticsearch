@@ -52,6 +52,7 @@ func (di *DeleteInstruction) writeTo(w io.Writer) error {
 }
 
 type bulkWriter struct {
+	e      *ElasticSearch
 	update chan Instruction
 	reqch  chan chan *http.Request
 	quit   chan bool
@@ -77,7 +78,7 @@ func (b *bulkWriter) SendBatch() error {
 	b.reqch <- reqch
 	req := <-reqch
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.e.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -108,6 +109,7 @@ func issueBulkRequest(u string, bw *bulkWriter, reqch chan *http.Request) {
 func (e *ElasticSearch) Bulk() BulkUpdater {
 
 	rv := &bulkWriter{
+		e:      e,
 		update: make(chan Instruction),
 		reqch:  make(chan chan *http.Request),
 		quit:   make(chan bool),
