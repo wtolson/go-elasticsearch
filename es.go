@@ -5,17 +5,24 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strings"
+)
+
+var (
+	ResponseError = errors.New("Response wasn't OK")
+)
+
+const (
+	JSON_MIME = "application/json"
 )
 
 // Reference to an ElasticSearch server.
 type ElasticSearch struct {
 	client *http.Client
-	// Base URL to elasticsearch
-	URL string
+	host   string
 }
 
 type response struct {
@@ -27,37 +34,39 @@ type response struct {
 	Source map[string]interface{} `json:"_source"`
 }
 
-func NewElasticSearch(URL string, maxConns int) *ElasticSearch {
+func NewElasticSearch(host string, maxConns int) *ElasticSearch {
 	transport := &http.Transport{
 		MaxIdleConnsPerHost: maxConns,
 	}
+
 	client := &http.Client{
 		Transport: transport,
 	}
 
 	return &ElasticSearch{
 		client: client,
-		URL:    URL,
+		host:   host,
 	}
 }
 
-func (es *ElasticSearch) mkURL(index, doctype, id string,
-	params map[string]string) string {
-
-	paramv := url.Values{}
-	for k, v := range params {
-		paramv.Set(k, v)
+func (es *ElasticSearch) url(parts ...string) *url.URL {
+	return &url.URL{
+		Scheme: "http",
+		Host:   es.host,
+		Path:   strings.Join(parts, "/"),
 	}
+}
 
-	return fmt.Sprintf("%s/%s/%s/%s?%s", es.URL,
-		url.QueryEscape(index),
-		url.QueryEscape(doctype),
-		url.QueryEscape(id),
-		paramv.Encode())
+func updateUrlQuery(u *url.URL, params map[string]string) {
+	query := u.Query()
+	for key, value := range params {
+		query.Add(key, value)
+	}
 }
 
 func handleResponse(resp *http.Response) (*response, error) {
 	defer resp.Body.Close()
+
 	if resp.StatusCode > 299 || resp.StatusCode < 200 {
 		return nil, errors.New(resp.Status)
 	}
@@ -67,16 +76,56 @@ func handleResponse(resp *http.Response) (*response, error) {
 		return nil, err
 	}
 
-	iresp := &response{}
-	err = json.Unmarshal(body, iresp)
+	data := &response{}
+
+	err = json.Unmarshal(body, data)
 	if err != nil {
 		return nil, err
 	}
-	if !iresp.OK {
-		return nil, errors.New("Response wasn't OK")
+
+	if !data.OK {
+		return nil, ResponseError
 	}
 
-	return iresp, nil
+	return data, nil
+}
+
+func (es *ElasticSearch) post(u string, data interface{}) (*response, error) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := es.client.Post(u, JSON_MIME, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+
+	return handleResponse(resp)
+}
+
+func (es *ElasticSearch) delete(u string) (*response, error) {
+	req, err := http.NewRequest("DELETE", u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := es.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return handleResponse(resp)
+}
+
+func (es *ElasticSearch) CreateIndex(index string, settings interface{},
+	params map[string]string) error {
+
+	u := es.url(index)
+	updateUrlQuery(u, params)
+
+	_, err := es.post(u.String(), settings)
+	return err
 }
 
 // Store a document in the index.
@@ -86,44 +135,30 @@ func handleResponse(resp *http.Response) (*response, error) {
 //
 // Returns the new ID on success, otherwise an error.
 func (es *ElasticSearch) Index(index, doctype, id string,
-	doc map[string]interface{},
-	params map[string]string) (string, error) {
+	doc interface{}, params map[string]string) (string, error) {
 
-	data, err := json.Marshal(doc)
+	u := es.url(index, doctype, id)
+	updateUrlQuery(u, params)
+
+	resp, err := es.post(u.String(), doc)
 	if err != nil {
 		return "", err
 	}
 
-	resp, err := es.client.Post(es.mkURL(index, doctype, id, params),
-		"application/json", bytes.NewBuffer(data))
-	if err != nil {
-		return "", err
-	}
-	iresp, err := handleResponse(resp)
-	if err != nil {
-		return "", err
-	}
-
-	return iresp.Id, nil
+	return resp.Id, nil
 }
 
 // Delete an index entry.
 func (es *ElasticSearch) Delete(index, doctype, id string,
 	params map[string]string) (bool, error) {
 
-	req, err := http.NewRequest("DELETE", es.mkURL(index, doctype, id, params),
-		nil)
-	if err != nil {
-		return false, err
-	}
-	resp, err := es.client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	iresp, err := handleResponse(resp)
+	u := es.url(index, doctype, id)
+	updateUrlQuery(u, params)
+
+	resp, err := es.delete(u.String())
 	if err != nil {
 		return false, err
 	}
 
-	return iresp.Found, nil
+	return resp.Found, nil
 }

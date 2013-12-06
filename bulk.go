@@ -52,7 +52,7 @@ func (di *DeleteInstruction) writeTo(w io.Writer) error {
 }
 
 type bulkWriter struct {
-	e      *ElasticSearch
+	es     *ElasticSearch
 	update chan Instruction
 	reqch  chan chan *http.Request
 	quit   chan bool
@@ -78,16 +78,18 @@ func (b *bulkWriter) SendBatch() error {
 	b.reqch <- reqch
 	req := <-reqch
 
-	resp, err := b.e.client.Do(req)
+	resp, err := b.es.client.Do(req)
 	if err != nil {
 		return err
 	}
-	// TODO: Is it necessary to read until EOF here?
+
 	defer resp.Body.Close()
+
 	// TODO: Parse the response and check each thingy.
 	if resp.StatusCode > 201 {
 		return errors.New("HTTP error:  " + resp.Status)
 	}
+
 	return nil
 }
 
@@ -95,36 +97,40 @@ func (b *bulkWriter) Quit() {
 	b.quit <- true
 }
 
-func issueBulkRequest(u string, bw *bulkWriter, reqch chan *http.Request) {
-	req, err := http.NewRequest("POST", u+"/_bulk", bw.w)
+func issueBulkRequest(bulkUrl string, bw *bulkWriter, reqch chan *http.Request) {
+	req, err := http.NewRequest("POST", bulkUrl, bw.w)
 	if err != nil {
 		log.Fatalf("Couldn't make a request: %v\n", err)
 	}
+
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", bw.w.Len()))
 	req.Header.Set("Content-Type", "application/json")
+
 	reqch <- req
 	bw.w = &bytes.Buffer{}
 }
 
 // Get a bulk updater.
-func (e *ElasticSearch) Bulk() BulkUpdater {
-
+func (es *ElasticSearch) Bulk() BulkUpdater {
 	rv := &bulkWriter{
-		e:      e,
+		es:     es,
 		update: make(chan Instruction),
 		reqch:  make(chan chan *http.Request),
 		quit:   make(chan bool),
 		w:      &bytes.Buffer{},
 	}
 
+	bulkUrl := es.url("_bulk").String()
+
 	go func() {
-		ever := true
-		for ever {
+		for {
 			select {
 			case <-rv.quit:
-				ever = false
+				break
+
 			case req := <-rv.reqch:
-				issueBulkRequest(e.URL, rv, req)
+				issueBulkRequest(bulkUrl, rv, req)
+
 			case upd := <-rv.update:
 				err := upd.writeTo(rv.w)
 				if err != nil {
